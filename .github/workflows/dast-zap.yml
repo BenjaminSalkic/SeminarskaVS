@@ -1,10 +1,6 @@
 name: DAST - OWASP ZAP
 
 on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -19,7 +15,7 @@ jobs:
         with:
           node-version: '18'
 
-      - name: Install dependencies
+      - name: Install deps
         run: npm ci
 
       - name: Start app
@@ -31,111 +27,66 @@ jobs:
             curl -sSf http://localhost:3000 && break || sleep 1
           done
 
-      - name: Log in to Docker Hub
-        uses: docker/login-action@v2
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Log in to GitHub Container Registry (GHCR)
-        uses: docker/login-action@v2
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: "Debug: test docker pull"
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Install tools
         run: |
-          echo "Docker version:" && docker --version || true
-          echo "Attempt docker login (no secrets printed)"
-          echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin || true
-          echo "Attempt test pull of ZAP image (GHCR)" && docker pull ghcr.io/zaproxy/zap2docker-stable:latest || true
-      - name: Install JVM, Python and tools for ZAP
-        run: |
-          set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends openjdk-11-jre-headless wget tar gzip python3 python3-pip netcat-openbsd
+          sudo apt-get install -y --no-install-recommends \
+            openjdk-11-jre-headless wget tar gzip python3 python3-pip netcat-openbsd jq
 
-      - name: Download and extract ZAP release
+      - name: Query releases and download ZAP
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          echo "Querying GitHub releases for zaproxy/zaproxy to find a unix tarball asset"
-          # Use authenticated API request to avoid low unauthenticated rate limits
-          REPO_API="https://api.github.com/repos/zaproxy/zaproxy/releases/latest"
-          HTTP_STATUS=$(curl -sS -o /tmp/releases.json -w "%{http_code}" -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "$REPO_API" || true)
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "ERROR: GitHub API returned HTTP $HTTP_STATUS"
-            echo "Response (first 400 chars):"
+          API_URL=https://api.github.com/repos/zaproxy/zaproxy/releases/latest
+          http_code=$(curl -sS -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GITHUB_TOKEN" -w "%{http_code}" -o /tmp/releases.json "$API_URL" || true)
+          if [ "$http_code" != "200" ]; then
+            echo "GitHub API returned $http_code"
             head -c 400 /tmp/releases.json || true
-            echo
             exit 1
           fi
-          # Find unix tarball asset URL from the release JSON
-          URL=$(python3 - <<'PY'
-import sys, json
-data = json.load(open('/tmp/releases.json'))
-for a in data.get('assets', []):
-    name = a.get('name','')
-    if 'unix' in name and name.endswith('.tar.gz'):
-        print(a.get('browser_download_url'))
-        sys.exit(0)
-sys.exit(1)
-PY
-)
+          URL=$(jq -r '.assets[] | select(.name | contains("unix") and (.name|endswith(".tar.gz"))) | .browser_download_url' /tmp/releases.json | head -n1 || true)
           if [ -z "${URL:-}" ]; then
-            echo "ERROR: could not find a unix tar.gz asset in zaproxy release assets" >&2
-            echo "Release JSON assets list:" && jq -r '.assets[].name' /tmp/releases.json || true
+            echo "No unix tar.gz asset found"
+            jq -r '.assets[].name' /tmp/releases.json || true
             exit 1
           fi
-          echo "Found asset URL: $URL"
-          curl -fSL --retry 3 --retry-delay 2 -o /tmp/zap.tar.gz "$URL"
-          echo "Extracting to /opt/zap"
+          echo "Downloading $URL"
+          curl -fSL -o /tmp/zap.tar.gz "$URL"
           sudo mkdir -p /opt/zap
           sudo tar -xzf /tmp/zap.tar.gz -C /opt/zap
           ZAPDIR=$(find /opt/zap -maxdepth 1 -type d -name 'ZAP_*' | head -n1)
           if [ -z "$ZAPDIR" ]; then
-            echo "ERROR: extracted ZAP directory not found" >&2
-            ls -la /opt/zap
+            echo "/opt/zap contents:" && ls -la /opt/zap
             exit 1
           fi
-          echo "ZAP extracted to: $ZAPDIR"
           echo "zap_dir=$ZAPDIR" >> "$GITHUB_OUTPUT"
 
       - name: Start ZAP daemon
         run: |
           set -euo pipefail
           ZAP_DIR=$(find /opt/zap -maxdepth 1 -type d -name 'ZAP_*' | head -n1)
-          echo "Using ZAP dir: $ZAP_DIR"
-          mkdir -p "$GITHUB_WORKSPACE/zap-report"
-          # start zap in daemon mode on port 8090
           "$ZAP_DIR/zap.sh" -daemon -port 8090 -host 127.0.0.1 &
-          # wait for ZAP to be ready
           for i in {1..30}; do
             if nc -z 127.0.0.1 8090 >/dev/null 2>&1; then
-              echo "ZAP daemon is listening"
+              echo "ZAP ready"
               break
             fi
             sleep 1
           done
 
-      - name: Run ZAP full scan (python script)
+      - name: Run ZAP scan
         run: |
           set -euo pipefail
           ZAP_DIR=$(find /opt/zap -maxdepth 1 -type d -name 'ZAP_*' | head -n1)
-          echo "Looking for zap-full-scan.py under $ZAP_DIR"
           FULLSCAN=$(find "$ZAP_DIR" -type f -name 'zap-full-scan.py' | head -n1 || true)
           if [ -z "$FULLSCAN" ]; then
-            echo "zap-full-scan.py not found, attempting to use zap-baseline.py"
             FULLSCAN=$(find "$ZAP_DIR" -type f -name 'zap-baseline.py' | head -n1 || true)
           fi
           if [ -z "$FULLSCAN" ]; then
-            echo "ERROR: no ZAP full-scan script found under $ZAP_DIR" >&2
+            echo "No fullscan or baseline script found under $ZAP_DIR" && ls -la "$ZAP_DIR"
             exit 1
           fi
-          echo "Using full-scan script: $FULLSCAN"
           python3 "$FULLSCAN" -t http://localhost:3000 -r "$GITHUB_WORKSPACE/zap-report/report.html"
 
       - name: Upload ZAP report
@@ -143,4 +94,4 @@ PY
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
-          path: "./"
+          path: "$GITHUB_WORKSPACE/zap-report"

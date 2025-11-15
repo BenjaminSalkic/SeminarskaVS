@@ -47,7 +47,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y openjdk-11-jre-headless wget tar gzip python3 python3-pip netcat
+          sudo apt-get install -y openjdk-11-jre-headless wget tar gzip python3 python3-pip netcat-openbsd
 
       - name: Download and extract ZAP release
         env:

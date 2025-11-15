@@ -29,6 +29,14 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Debug: test docker pull
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          echo "Docker version:" && docker --version || true
+          echo "Attempt docker login (no secrets printed)" && echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin || true
+          echo "Attempt test pull of ZAP image" && docker pull owasp/zap2docker-stable || true
       - name: Run ZAP full scan
         uses: zaproxy/action-full-scan@v0.4.0
         with:

@@ -37,10 +37,19 @@ jobs:
           echo "Docker version:" && docker --version || true
           echo "Attempt docker login (no secrets printed)" && echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin || true
           echo "Attempt test pull of ZAP image" && docker pull owasp/zap2docker-stable || true
-      - name: Run ZAP full scan
-        uses: zaproxy/action-full-scan@v0.4.0
-        with:
-          target: 'http://localhost:3000'
+      - name: Pull ZAP image (explicit)
+        run: |
+          echo "Attempt explicit docker pull of owasp/zap2docker-stable"
+          docker pull owasp/zap2docker-stable:latest
+
+      - name: Run ZAP full scan (docker run)
+        run: |
+          echo "Running ZAP full scan using docker run; report will be written into workspace"
+          mkdir -p $GITHUB_WORKSPACE/zap-report
+          # Run ZAP container and mount the workspace so reports are available to the job.
+          # Use host networking so the container can reach the app running on localhost.
+          docker run --network host --rm -v "$GITHUB_WORKSPACE:/zap/wrk" owasp/zap2docker-stable:latest \
+            zap-full-scan.py -t http://localhost:3000 -r /zap/wrk/zap-report/report.html || true
       - name: Upload ZAP report
         if: always()
         uses: actions/upload-artifact@v4

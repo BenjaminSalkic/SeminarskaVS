@@ -50,19 +50,31 @@ jobs:
           sudo apt-get install -y openjdk-11-jre-headless wget tar gzip python3 python3-pip netcat-openbsd
 
       - name: Download and extract ZAP release
-        env:
-          ZAP_VERSION: "2.12.0"
         run: |
           set -euo pipefail
-          VER=${ZAP_VERSION}
-          VER_US=${VER//./_}
-          echo "Downloading ZAP v${VER}"
-          URL="https://github.com/zaproxy/zaproxy/releases/download/v${VER}/ZAP_${VER_US}_unix.tar.gz"
-          echo "Using URL: $URL"
-          wget -q -O /tmp/zap.tar.gz "$URL"
-          mkdir -p /opt/zap
-          tar -xzf /tmp/zap.tar.gz -C /opt/zap
-          # find extracted dir
+          # Try multiple ZAP versions (newest first) and use curl with retries
+          CAND_VERS=("2.14.0" "2.13.0" "2.12.0")
+          SAVED=""
+          for VER in "${CAND_VERS[@]}"; do
+            VER_US=${VER//./_}
+            URL="https://github.com/zaproxy/zaproxy/releases/download/v${VER}/ZAP_${VER_US}_unix.tar.gz"
+            echo "Trying download URL: $URL"
+            if curl -fSL --retry 3 --retry-delay 2 -o /tmp/zap.tar.gz "$URL"; then
+              echo "Downloaded ZAP v${VER}"
+              SAVED="$VER"
+              break
+            else
+              echo "Download failed for v${VER}"
+            fi
+          done
+          if [ -z "$SAVED" ]; then
+            echo "ERROR: could not download any ZAP release. Tried: ${CAND_VERS[*]}" >&2
+            ls -la /tmp || true
+            exit 1
+          fi
+          echo "Extracting ZAP v${SAVED} to /opt/zap"
+          sudo mkdir -p /opt/zap
+          sudo tar -xzf /tmp/zap.tar.gz -C /opt/zap
           ZAPDIR=$(find /opt/zap -maxdepth 1 -type d -name 'ZAP_*' | head -n1)
           if [ -z "$ZAPDIR" ]; then
             echo "ERROR: extracted ZAP directory not found" >&2

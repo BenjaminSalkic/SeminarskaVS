@@ -45,10 +45,12 @@ jobs:
             head -c 400 /tmp/releases.json || true
             exit 1
           fi
-          URL=$(jq -r '.assets[] | select(.name | contains("unix") and (.name|endswith(".tar.gz"))) | .browser_download_url' /tmp/releases.json | head -n1 || true)
+          # Find any tar.gz asset (linux/unix) robustly even if JSON shape varies
+          URL=$(jq -r '.. | objects | select(.name? and (.name|test("\\.tar\\.gz$";"i"))) | .browser_download_url' /tmp/releases.json | head -n1 || true)
           if [ -z "${URL:-}" ]; then
-            echo "No unix tar.gz asset found"
-            jq -r '.assets[].name' /tmp/releases.json || true
+            echo "No tar.gz asset found in release JSON"
+            # print possible asset names (robust fallback)
+            jq -r '.. | objects | select(.name?) | .name' /tmp/releases.json | sed -n '1,200p' || true
             exit 1
           fi
           echo "Downloading $URL"

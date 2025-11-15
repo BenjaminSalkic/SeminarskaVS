@@ -64,18 +64,38 @@ jobs:
           fi
           echo "zap_dir=$ZAPDIR" >> "$GITHUB_OUTPUT"
 
-      - name: Start ZAP daemon
+      - name: Start ZAP daemon (with diagnostics)
         run: |
           set -euo pipefail
           ZAP_DIR=$(find /opt/zap -maxdepth 1 -type d -name 'ZAP_*' | head -n1)
-          "$ZAP_DIR/zap.sh" -daemon -port 8090 -host 127.0.0.1 &
+          echo "Using ZAP dir: $ZAP_DIR"
+          LOG="$GITHUB_WORKSPACE/zap.log"
+          echo "Starting ZAP daemon, logging to $LOG"
+          nohup "$ZAP_DIR/zap.sh" -daemon -port 8090 -host 127.0.0.1 > "$LOG" 2>&1 &
+          # Wait for the ZAP API to respond (try up to 60s)
           for i in {1..30}; do
-            if nc -z 127.0.0.1 8090 >/dev/null 2>&1; then
-              echo "ZAP ready"
+            # attempt to call the core version API
+            HTTP=$(curl -sS -o /tmp/zap_version.json -w "%{http_code}" http://127.0.0.1:8090/JSON/core/view/version/ || true)
+            if [ "$HTTP" = "200" ]; then
+              echo "ZAP API responded (200)"
+              cat /tmp/zap_version.json
               break
             fi
-            sleep 1
+            echo "ZAP API not ready yet (http=$HTTP), sleeping..."
+            sleep 2
           done
+          if [ "$HTTP" != "200" ]; then
+            echo "ZAP did not respond after waiting; dumping diagnostics"
+            echo "--- /opt/zap listing ---"
+            ls -la "$ZAP_DIR" || true
+            echo "--- tail of zap.log ---"
+            tail -n 200 "$LOG" || true
+            echo "--- listening sockets ---"
+            ss -ltnp || true
+            echo "--- java processes ---"
+            ps aux | grep java || true
+            exit 1
+          fi
 
       - name: Run ZAP scan
         run: |

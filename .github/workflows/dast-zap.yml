@@ -63,20 +63,31 @@ jobs:
         run: |
           set -euo pipefail
           echo "Querying GitHub releases for zaproxy/zaproxy to find a unix tarball asset"
-          URL=$(curl -sS "https://api.github.com/repos/zaproxy/zaproxy/releases" | python3 - <<'PY'
-          import sys, json
-          releases = json.load(sys.stdin)
-          for rel in releases:
-              for a in rel.get('assets', []):
-                  name = a.get('name', '')
-                  if 'unix' in name and name.endswith('.tar.gz'):
-                      print(a.get('browser_download_url'))
-                      sys.exit(0)
-          sys.exit(1)
-          PY
-          )
+          # Use authenticated API request to avoid low unauthenticated rate limits
+          REPO_API="https://api.github.com/repos/zaproxy/zaproxy/releases/latest"
+          HTTP_STATUS=$(curl -sS -o /tmp/releases.json -w "%{http_code}" -H "Accept: application/vnd.github+json" -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "$REPO_API" || true)
+          if [ "$HTTP_STATUS" != "200" ]; then
+            echo "ERROR: GitHub API returned HTTP $HTTP_STATUS"
+            echo "Response (first 400 chars):"
+            head -c 400 /tmp/releases.json || true
+            echo
+            exit 1
+          fi
+          # Find unix tarball asset URL from the release JSON
+          URL=$(python3 - <<'PY'
+import sys, json
+data = json.load(open('/tmp/releases.json'))
+for a in data.get('assets', []):
+    name = a.get('name','')
+    if 'unix' in name and name.endswith('.tar.gz'):
+        print(a.get('browser_download_url'))
+        sys.exit(0)
+sys.exit(1)
+PY
+)
           if [ -z "${URL:-}" ]; then
-            echo "ERROR: could not find a unix tar.gz asset in zaproxy releases" >&2
+            echo "ERROR: could not find a unix tar.gz asset in zaproxy release assets" >&2
+            echo "Release JSON assets list:" && jq -r '.assets[].name' /tmp/releases.json || true
             exit 1
           fi
           echo "Found asset URL: $URL"

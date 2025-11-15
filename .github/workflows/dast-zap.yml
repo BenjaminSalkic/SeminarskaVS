@@ -80,16 +80,41 @@ jobs:
       - name: Run ZAP scan
         run: |
           set -euo pipefail
-          ZAP_DIR=$(find /opt/zap -maxdepth 1 -type d -name 'ZAP_*' | head -n1)
-          FULLSCAN=$(find "$ZAP_DIR" -type f -name 'zap-full-scan.py' | head -n1 || true)
-          if [ -z "$FULLSCAN" ]; then
-            FULLSCAN=$(find "$ZAP_DIR" -type f -name 'zap-baseline.py' | head -n1 || true)
+          TARGET="http://localhost:3000"
+          mkdir -p "$GITHUB_WORKSPACE/zap-report"
+          echo "Triggering spider for $TARGET"
+          SPIDER_JSON=$(curl -sS "http://127.0.0.1:8090/JSON/spider/action/scan/?url=$TARGET&recurse=true")
+          SPIDER_ID=$(echo "$SPIDER_JSON" | jq -r '.scan // .scanId // empty')
+          echo "Spider started, id=$SPIDER_ID"
+          if [ -n "$SPIDER_ID" ]; then
+            while true; do
+              STATUS=$(curl -sS "http://127.0.0.1:8090/JSON/spider/view/status/?scanId=$SPIDER_ID" | jq -r '.status // .state // empty')
+              echo "Spider status: $STATUS"
+              [ "$STATUS" = "100" ] && break
+              sleep 3
+            done
+          else
+            echo "Warning: spider did not return an id, continuing"
           fi
-          if [ -z "$FULLSCAN" ]; then
-            echo "No fullscan or baseline script found under $ZAP_DIR" && ls -la "$ZAP_DIR"
-            exit 1
+
+          echo "Triggering active scan for $TARGET"
+          ASCAN_JSON=$(curl -sS "http://127.0.0.1:8090/JSON/ascan/action/scan/?url=$TARGET&recurse=true")
+          ASCAN_ID=$(echo "$ASCAN_JSON" | jq -r '.scan // .scanId // empty')
+          echo "Active scan started, id=$ASCAN_ID"
+          if [ -n "$ASCAN_ID" ]; then
+            while true; do
+              STATUS=$(curl -sS "http://127.0.0.1:8090/JSON/ascan/view/status/?scanId=$ASCAN_ID" | jq -r '.status // empty')
+              echo "Active scan status: $STATUS"
+              [ "$STATUS" = "100" ] && break
+              sleep 5
+            done
+          else
+            echo "Warning: active scan did not return an id, continuing"
           fi
-          python3 "$FULLSCAN" -t http://localhost:3000 -r "$GITHUB_WORKSPACE/zap-report/report.html"
+
+          echo "Generating HTML report"
+          curl -sS "http://127.0.0.1:8090/OTHER/core/other/htmlreport/" -o "$GITHUB_WORKSPACE/zap-report/report.html"
+          echo "Report saved to $GITHUB_WORKSPACE/zap-report/report.html"
 
       - name: Upload ZAP report
         if: always()

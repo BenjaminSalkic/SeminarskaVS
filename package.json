@@ -1,0 +1,13 @@
+{
+  "name": "seminar-ci-security-demo",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "start": "node index.js",
+    "test": "echo \"No tests\""
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "lodash": "4.17.21"
+  }
+}

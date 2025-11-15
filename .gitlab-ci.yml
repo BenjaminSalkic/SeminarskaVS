@@ -1,0 +1,21 @@
+stages:
+  - test
+  - sast
+  - dast
+
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/DAST.gitlab-ci.yml
+
+# Optional: a tiny job that installs dependencies so SAST/DAST have code to scan
+npm_install:
+  stage: test
+  image: node:18
+  script:
+    - npm ci
+  artifacts:
+    paths:
+      - node_modules/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "push"
+      when: always

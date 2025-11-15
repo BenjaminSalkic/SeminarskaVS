@@ -43,19 +43,43 @@ jobs:
           echo "Docker version:" && docker --version || true
           echo "Attempt docker login (no secrets printed)" && echo "$DOCKERHUB_TOKEN" | docker login --username "$DOCKERHUB_USERNAME" --password-stdin || true
           echo "Attempt test pull of ZAP image (GHCR)" && docker pull ghcr.io/zaproxy/zap2docker-stable:latest || true
-      - name: Pull ZAP image (explicit)
+      - name: Pull candidate ZAP images and select one
+        id: select_image
         run: |
-          echo "Attempt explicit docker pull of ZAP image from GHCR"
-          docker pull ghcr.io/zaproxy/zap2docker-stable:latest
+          set -euo pipefail
+          echo "Trying candidate images to pull (first that succeeds will be used)"
+          CANDIDATES=(
+            "ghcr.io/zaproxy/zap2docker-stable:latest"
+            "owasp/zap2docker-stable:latest"
+            "ghcr.io/zaproxy/zap2docker-stable:2.13.0"
+            "ghcr.io/zaproxy/zap2docker-stable:2.12.0"
+          )
+          CHOSEN=""
+          for img in "${CANDIDATES[@]}"; do
+            echo "Attempting pull: $img"
+            if docker pull "$img"; then
+              CHOSEN="$img"
+              echo "Pulled $img successfully"
+              break
+            else
+              echo "Pull failed for $img"
+            fi
+          done
+          if [ -z "$CHOSEN" ]; then
+            echo "ERROR: could not pull any candidate ZAP image. Tried: ${CANDIDATES[*]}" >&2
+            exit 1
+          fi
+          echo "selected_image=$CHOSEN" >> "$GITHUB_OUTPUT"
 
       - name: Run ZAP full scan (docker run)
         run: |
-          echo "Running ZAP full scan using docker run; report will be written into workspace"
-          mkdir -p $GITHUB_WORKSPACE/zap-report
-          # Run ZAP container and mount the workspace so reports are available to the job.
+          set -euo pipefail
+          IMAGE=${{ steps.select_image.outputs.selected_image }}
+          echo "Running ZAP full scan using image: $IMAGE"
+          mkdir -p "$GITHUB_WORKSPACE/zap-report"
           # Use host networking so the container can reach the app running on localhost.
-          docker run --network host --rm -v "$GITHUB_WORKSPACE:/zap/wrk" ghcr.io/zaproxy/zap2docker-stable:latest \
-            zap-full-scan.py -t http://localhost:3000 -r /zap/wrk/zap-report/report.html || true
+          docker run --network host --rm -v "$GITHUB_WORKSPACE:/zap/wrk" "$IMAGE" \
+            zap-full-scan.py -t http://localhost:3000 -r /zap/wrk/zap-report/report.html
       - name: Upload ZAP report
         if: always()
         uses: actions/upload-artifact@v4

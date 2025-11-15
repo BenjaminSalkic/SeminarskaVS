@@ -143,4 +143,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: zap-report
-          path: "$GITHUB_WORKSPACE/zap-report"
+          # Use the workflow expression so the runner expands the workspace path.
+          # Also include a relative path fallback in case expansion behaves differently.
+          path: |
+            ${{ github.workspace }}/zap-report
+            zap-report

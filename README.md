@@ -2,7 +2,7 @@ CI/CD & Application Security — Seminar demo
 
 This repository is a minimal seminar demo for "CI/CD preverjanje aplikacij / Preverjanje varnosti aplikacij". It demonstrates the checklist items below and provides example GitHub and GitLab automation.
 
-Checklist covered
+Checklist 
 - Iskanje znanih varnostnih lukenj (dependency scanning via Dependabot / GitLab Dependency Scanning)
 - Statično preverjanje kode (SAST) via GitHub CodeQL and GitLab SAST templates
 - Dinamično testiranje na testnem okolju (DAST) via OWASP ZAP GitHub Action and GitLab DAST template
